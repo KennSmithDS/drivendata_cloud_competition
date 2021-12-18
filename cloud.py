@@ -52,7 +52,7 @@ class Sentinel2CloudCover(Sentinel2):
         download: bool = False,
         api_key: Optional[str] = None,
         cache: bool = True,
-#         checksum: bool = False,
+        # checksum: bool = False,
     ) -> None:
 
         """Initialize a new Cloud Cover Detection Competition Dataset
@@ -77,7 +77,7 @@ class Sentinel2CloudCover(Sentinel2):
         self.split = split
         self.data = x_paths
         self.label = y_paths
-#         self.checksum = checksum
+        # self.checksum = checksum
 
         # placeholder for configuring download from Radiant MLHub
         # if download:    
@@ -172,7 +172,11 @@ class Sentinel2CloudCoverDataModule(pl.LightningDataModule):
         This includes optionally downloading the dataset. This is done once per node,
         while :func:`setup` is done once per GPU.
         """
-        Sentinel2CloudCover(self.root_dir)
+        Sentinel2CloudCover(
+            self.root_dir, 
+            split="train",
+            # checksum=False
+            )
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Create the train/val/test splits based on the original Dataset objects.
@@ -206,7 +210,7 @@ class Sentinel2CloudCoverDataModule(pl.LightningDataModule):
         )        
 
         chip_ids = []
-        for item in self.all_train_dataset.collection:
+        for item in self.all_train_dataset:
             chip_id = item["href"].split("/")[0].split("_")[-2]
             chip_ids.append(chip_id)
 
