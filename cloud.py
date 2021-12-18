@@ -52,7 +52,7 @@ class Sentinel2CloudCover(Sentinel2):
         download: bool = False,
         api_key: Optional[str] = None,
         cache: bool = True,
-        checksum: bool = False,
+#         checksum: bool = False,
     ) -> None:
 
         """Initialize a new Cloud Cover Detection Competition Dataset
@@ -77,7 +77,7 @@ class Sentinel2CloudCover(Sentinel2):
         self.split = split
         self.data = x_paths
         self.label = y_paths
-        self.checksum = checksum
+#         self.checksum = checksum
 
         # placeholder for configuring download from Radiant MLHub
         # if download:    
