@@ -1,22 +1,27 @@
-from typing import Any, Callable, Dict, Optional, Sequence
+import sys, traceback, os
+from pathlib import Path
+from typing import Any, Callable, Dict, Optional, Sequence, List
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import GroupShuffleSplit
 
 from PIL import Image
+import rasterio
 from rasterio.crs import CRS
 
 import torch
 from torch import Tensor
+from torch.nn.functional import one_hot
 from torch.utils.data import DataLoader, Subset
-from torchgeo.datasets import Sentinel2
+from torchgeo.datasets.geo import VisionDataset
 import pytorch_lightning as pl
 
 # https://github.com/pytorch/pytorch/issues/60979
 # https://github.com/pytorch/pytorch/pull/61045
 DataLoader.__module__ = "torch.utils.data"
+CLOUD_BANDS = ["B04","B03","B02","B08"]
 
-class Sentinel2CloudCover(Sentinel2):
+class Sentinel2CloudCover(VisionDataset):
     """Sentinel2 Cloud Cover Detection Competition dataset.
 
     ** NOTE: check if this is the description to be used **
@@ -36,19 +41,17 @@ class Sentinel2CloudCover(Sentinel2):
 
     """
 
-    filename_glob = "B02.*"
-    filename_regex = """^(?P<band>B\d{2})"""
-    bands = ["B02","B03","B04","B08"]
+    # filename_glob = "B0*.*"
+    # filename_regex = """^(?P<band>B\d{2})"""
+    feature_dir = "train_features"
+    label_dir = "train_labels"
+    n_classes = 2
 
     def __init__(
         self,
-        x_paths: pd.DataFrame,
         root: str = "data",
         split: str = "train",
-        bands: Sequence[str] = [],
-        y_paths: Optional[pd.DataFrame] = None,
-        crs: Optional[CRS] = None,
-        res: Optional[float] = None,
+        bands: List[str] = [],
         transforms: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
         download: bool = False,
         api_key: Optional[str] = None,
@@ -59,12 +62,8 @@ class Sentinel2CloudCover(Sentinel2):
         """Initialize a new Cloud Cover Detection Competition Dataset
 
         Args:
-            root: root directory where dataset can be found
-            crs: :term:`coordinate reference system (CRS)` to warp to
-                (defaults to the CRS of the first file found)
-            res: resolution of the dataset in units of CRS
-                (defaults to the resolution of the first file found)
-            bands: bands to return (defaults to all bands)
+            root: str root directory where dataset can be found
+            bands: List[str] bands to return (defaults to all bands)
             transforms: a function/transform that takes an input sample
                 and returns a transformed version
             cache: if True, cache file handle to speed up repeated sampling
@@ -72,14 +71,16 @@ class Sentinel2CloudCover(Sentinel2):
         Raises:
 
         """
-        
-        super().__init__(root, crs, res, bands, transforms, cache)
 
+        self.root = root
         self.split = split
-        self.data = x_paths
-        self.label = y_paths
+        self.transforms = transforms
         self.checksum = checksum
+
+        self.bands = bands if bands else CLOUD_BANDS
         self.chip_ids = []
+
+        self._set_chip_ids()
 
         # placeholder for configuring download from Radiant MLHub
         # if download:    
@@ -91,49 +92,68 @@ class Sentinel2CloudCover(Sentinel2):
         Returns:
             length of the dataset
         """
-        return len(self.data)
+        return len(self.chip_ids)
 
-    def __getitem__(self, idx: int):
-        """Return an index within the dataset.
+    def __getitem__(self, index: int) -> Dict[str, Tensor]:
+        """Return an item based on index within the dataset.
 
         Args:
             idx: index to return
         Returns:
-            data, labels, field ids, and metadata at that index
+            item with feature image and label
         """
 
-        # Loads an n-channel image from a chip-level dataframe
-        img = self.data.loc[idx]
+        try:
+            
+            chip = self.chip_ids[index]
+            print(f"Loading chip id: {chip}\n")
+            item = {
+                "image": self._load_feature(chip),
+                "mask": self._load_label(chip)
+                }
+
+            return item
+
+        except Exception:
+
+            print("Exception in code to get items by index:")
+            print("-"*60)
+            traceback.print_exc(file=sys.stdout)
+            print("-"*60)
+
+    def _set_chip_ids(self) -> None:
+
+        self.full_feature_path = Path(self.root) / self.feature_dir
+        self.chip_ids = [x for x in os.walk(self.full_feature_path) if x[0].__contains__(self.feature_dir)][0][1]
+
+    def _load_feature(self, chip: str) -> Tensor:
+
+        chip_path = self.full_feature_path / chip
         band_arrs = []
         for band in self.bands:
-            with rasterio.open(img[f"{band}_path"]) as b:
-                band_arr = b.read(1).astype("float32")
+            with rasterio.open(os.path.join(chip_path, f"{band}.tif")) as bimg:
+                band_arr = bimg.read(1).astype("float32")
             band_arrs.append(band_arr)
         x_arr = np.stack(band_arrs, axis=-1)
 
         # Apply data augmentations, if provided
         if self.transforms:
-            x_arr = self.transforms(image=x_arr)["image"]
+            x_arr = self.transforms(x_arr)
         x_arr = np.transpose(x_arr, [2, 0, 1])
 
-        # Prepare dictionary for item
-        item = {
-            "chip_id": img.chip_id, 
-            "chip": x_arr
-            }
-        chip_ids.append(item["chip_id"])
+        return x_arr
 
-        # Load label if available
-        if self.label is not None:
-            label_path = self.label.loc[idx].label_path
-            with rasterio.open(label_path) as lp:
-                y_arr = lp.read(1).astype("float32")
-            # Apply same data augmentations to the label
-            if self.transforms:
-                y_arr = self.transforms(image=y_arr)["image"]
-            item["label"] = y_arr
+    def _load_label(self, chip: str) -> Tensor:
 
-        return item
+        label_path = Path(self.root) / self.label_dir / chip
+        with rasterio.open(f"{label_path}.tif") as limg:
+            y_arr = limg.read(1)#.astype("int32")
+
+        # Apply same data augmentations to the label
+        if self.transforms:
+            y_arr = self.transforms(y_arr)
+
+        return y_arr
 
 class Sentinel2CloudCoverDataModule(pl.LightningDataModule):
     """LightningDataModule implementation for Sentinel2 Cloud Cover Dataset.
@@ -146,6 +166,7 @@ class Sentinel2CloudCoverDataModule(pl.LightningDataModule):
         root_dir: str,
         seed: int,
         batch_size: int = 64,
+        n_classes: int = 2,
         num_workers: int = 0,
         api_key: Optional[str] = None,
         **kwargs: Any,
@@ -155,6 +176,7 @@ class Sentinel2CloudCoverDataModule(pl.LightningDataModule):
         self.root_dir = root_dir
         self.seed = seed
         self.batch_size = batch_size
+        self.n_classes = n_classes
         self.num_workers = num_workers
         self.api_key = api_key
 
@@ -169,20 +191,27 @@ class Sentinel2CloudCoverDataModule(pl.LightningDataModule):
         """
 
         # Add any code to preprocess the images here
+        
+        # sample["mask"] = torch.as_tensor(sample["mask"])
+        # sample["mask"] = one_hot(sample["mask"], num_classes=self.n_classes)
+
+        # sample["image"] = torch.from_numpy(sample["image"])
+        # sample["mask"] = torch.from_numpy(sample["mask"])
 
         return sample
 
     def prepare_data(self) -> None:
         """Initialize the main ``Dataset`` objects for use in :func:`setup`.
 
-        This includes optionally downloading the dataset. This is done once per node,
-        while :func:`setup` is done once per GPU.
+        This is done once per node, while :func:`setup` is done once per GPU.
         """
         Sentinel2CloudCover(
-            self.root_dir, 
-            bands=
+            self.root_dir,
             split="train",
-            # checksum=False
+            bands=CLOUD_BANDS,
+            transforms=None,
+            download=False,
+            checksum=False,
             )
 
     def setup(self, stage: Optional[str] = None) -> None:
@@ -205,16 +234,18 @@ class Sentinel2CloudCoverDataModule(pl.LightningDataModule):
         self.all_train_dataset = Sentinel2CloudCover(
             self.root_dir,
             split="train",
+            bands=CLOUD_BANDS,
             transforms=self.custom_transform,
             download=False,
         )
 
-        self.all_test_dataset = Sentinel2CloudCover(
-            self.root_dir,
-            split="test",
-            transforms=self.custom_transform,
-            download=False,
-        )        
+        # self.all_test_dataset = Sentinel2CloudCover(
+        #     self.root_dir,
+        #     split="test",
+        #     bands=CLOUD_BANDS,
+        #     transforms=self.custom_transform,
+        #     download=False,
+        # )        
 
         train_indices, val_indices = next(
             GroupShuffleSplit(test_size=0.2, n_splits=2, random_state=self.seed).split(
@@ -224,9 +255,13 @@ class Sentinel2CloudCoverDataModule(pl.LightningDataModule):
 
         self.train_dataset = Subset(self.all_train_dataset, train_indices)
         self.val_dataset = Subset(self.all_train_dataset, val_indices)
-        self.test_dataset = Subset(
-            self.all_test_dataset, range(len(self.all_test_dataset))
-        )
+
+        # self.test_dataset = Subset(
+        #     self.all_test_dataset, range(len(self.all_test_dataset))
+        # )
+
+    def teardown(self) -> None:
+        pass
 
     def train_dataloader(self) -> DataLoader[Any]:
         """Return a DataLoader for training.
@@ -254,15 +289,15 @@ class Sentinel2CloudCoverDataModule(pl.LightningDataModule):
             shuffle=False,
         )
 
-    def test_dataloader(self) -> DataLoader[Any]:
-        """Return a DataLoader for testing.
+    # def test_dataloader(self) -> DataLoader[Any]:
+    #     """Return a DataLoader for testing.
 
-        Returns:
-            testing data loader
-        """
-        return DataLoader(
-            self.test_dataset,
-            batch_size=self.batch_size,
-            num_workers=self.num_workers,
-            shuffle=False,
-        )
+    #     Returns:
+    #         testing data loader
+    #     """
+    #     return DataLoader(
+    #         self.test_dataset,
+    #         batch_size=self.batch_size,
+    #         num_workers=self.num_workers,
+    #         shuffle=False,
+    #     )
