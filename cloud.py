@@ -1,9 +1,11 @@
-
 from typing import Any, Callable, Dict, Optional, Sequence
 import numpy as np
+import pandas as pd
 from sklearn.model_selection import GroupShuffleSplit
+
 from PIL import Image
 from rasterio.crs import CRS
+
 import torch
 from torch import Tensor
 from torch.utils.data import DataLoader, Subset
@@ -39,15 +41,18 @@ class Sentinel2CloudCover(Sentinel2):
 
     def __init__(
         self,
+        x_paths: pd.DataFrame,
         root: str = "data",
         split: str = "train",
+        bands: Sequence[str] = [],
+        y_paths: Optional[pd.DataFrame] = None,
         crs: Optional[CRS] = None,
         res: Optional[float] = None,
-        bands: Sequence[str] = [],
         transforms: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
         download: bool = False,
         api_key: Optional[str] = None,
         cache: bool = True,
+        checksum: bool = False,
     ) -> None:
 
         """Initialize a new Cloud Cover Detection Competition Dataset
@@ -70,6 +75,9 @@ class Sentinel2CloudCover(Sentinel2):
         super().__init__(root, crs, res, bands, transforms, cache)
 
         self.split = split
+        self.data = x_paths
+        self.label = y_paths
+        self.checksum = checksum
 
         # placeholder for configuring download from Radiant MLHub
         # if download:    
@@ -136,6 +144,7 @@ class Sentinel2CloudCoverDataModule(pl.LightningDataModule):
         api_key: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
+
         super().__init__()
         self.root_dir = root_dir
         self.seed = seed
@@ -163,7 +172,7 @@ class Sentinel2CloudCoverDataModule(pl.LightningDataModule):
         This includes optionally downloading the dataset. This is done once per node,
         while :func:`setup` is done once per GPU.
         """
-        Sentinel2CloudCover(self.root_dir, checksum=False)
+        Sentinel2CloudCover(self.root_dir)
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Create the train/val/test splits based on the original Dataset objects.
