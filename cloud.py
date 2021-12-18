@@ -38,6 +38,7 @@ class Sentinel2CloudCover(Sentinel2):
 
     filename_glob = "B02.*"
     filename_regex = """^(?P<band>B\d{2})"""
+    bands = ["B02","B03","B04","B08"]
 
     def __init__(
         self,
@@ -52,7 +53,7 @@ class Sentinel2CloudCover(Sentinel2):
         download: bool = False,
         api_key: Optional[str] = None,
         cache: bool = True,
-        # checksum: bool = False,
+        checksum: bool = False,
     ) -> None:
 
         """Initialize a new Cloud Cover Detection Competition Dataset
@@ -77,7 +78,8 @@ class Sentinel2CloudCover(Sentinel2):
         self.split = split
         self.data = x_paths
         self.label = y_paths
-        # self.checksum = checksum
+        self.checksum = checksum
+        self.chip_ids = []
 
         # placeholder for configuring download from Radiant MLHub
         # if download:    
@@ -115,7 +117,11 @@ class Sentinel2CloudCover(Sentinel2):
         x_arr = np.transpose(x_arr, [2, 0, 1])
 
         # Prepare dictionary for item
-        item = {"chip_id": img.chip_id, "chip": x_arr}
+        item = {
+            "chip_id": img.chip_id, 
+            "chip": x_arr
+            }
+        chip_ids.append(item["chip_id"])
 
         # Load label if available
         if self.label is not None:
@@ -174,6 +180,7 @@ class Sentinel2CloudCoverDataModule(pl.LightningDataModule):
         """
         Sentinel2CloudCover(
             self.root_dir, 
+            bands=
             split="train",
             # checksum=False
             )
@@ -209,14 +216,9 @@ class Sentinel2CloudCoverDataModule(pl.LightningDataModule):
             download=False,
         )        
 
-        chip_ids = []
-        for item in self.all_train_dataset:
-            chip_id = item["href"].split("/")[0].split("_")[-2]
-            chip_ids.append(chip_id)
-
         train_indices, val_indices = next(
             GroupShuffleSplit(test_size=0.2, n_splits=2, random_state=self.seed).split(
-                chip_ids, groups=chip_ids
+                self.all_train_dataset.chip_ids, groups=self.all_train_dataset.chip_ids
             )
         )
 
