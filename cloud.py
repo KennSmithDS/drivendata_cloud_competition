@@ -95,24 +95,33 @@ class Sentinel2CloudCover(VisionDataset):
         return len(self.chip_ids)
 
     def __getitem__(self, index: int) -> Dict[str, Tensor]:
-        """Return an item based on index within the dataset.
+        """Return an sample based on index within the dataset.
 
         Args:
             idx: index to return
         Returns:
-            item with feature image and label
+            sample with feature image and label
         """
 
         try:
             
             chip = self.chip_ids[index]
             print(f"Loading chip id: {chip}\n")
-            item = {
+
+            sample = {
                 "image": self._load_feature(chip),
                 "mask": self._load_label(chip)
                 }
 
-            return item
+            sample["mask"] = sample["mask"].astype("int32")
+            sample["image"] = torch.from_numpy(sample["image"])
+            sample["mask"] = torch.from_numpy(sample["mask"])
+
+            # Apply data augmentations, if provided
+            if self.transforms is not None:
+                sample = self.transforms(sample)
+
+            return sample
 
         except Exception:
 
@@ -121,12 +130,7 @@ class Sentinel2CloudCover(VisionDataset):
             traceback.print_exc(file=sys.stdout)
             print("-"*60)
 
-    def _set_chip_ids(self) -> None:
-
-        self.full_feature_path = Path(self.root) / self.feature_dir
-        self.chip_ids = [x for x in os.walk(self.full_feature_path) if x[0].__contains__(self.feature_dir)][0][1]
-
-    def _load_feature(self, chip: str) -> Tensor:
+    def _load_feature(self, chip: str):
 
         chip_path = self.full_feature_path / chip
         band_arrs = []
@@ -135,25 +139,22 @@ class Sentinel2CloudCover(VisionDataset):
                 band_arr = bimg.read(1).astype("float32")
             band_arrs.append(band_arr)
         x_arr = np.stack(band_arrs, axis=-1)
-
-        # Apply data augmentations, if provided
-        if self.transforms:
-            x_arr = self.transforms(x_arr)
         x_arr = np.transpose(x_arr, [2, 0, 1])
 
         return x_arr
 
-    def _load_label(self, chip: str) -> Tensor:
+    def _load_label(self, chip: str):
 
         label_path = Path(self.root) / self.label_dir / chip
         with rasterio.open(f"{label_path}.tif") as limg:
             y_arr = limg.read(1)#.astype("int32")
 
-        # Apply same data augmentations to the label
-        if self.transforms:
-            y_arr = self.transforms(y_arr)
-
         return y_arr
+
+    def _set_chip_ids(self) -> None:
+
+        self.full_feature_path = Path(self.root) / self.feature_dir
+        self.chip_ids = [x for x in os.walk(self.full_feature_path) if x[0].__contains__(self.feature_dir)][0][1]
 
 class Sentinel2CloudCoverDataModule(pl.LightningDataModule):
     """LightningDataModule implementation for Sentinel2 Cloud Cover Dataset.
@@ -197,6 +198,7 @@ class Sentinel2CloudCoverDataModule(pl.LightningDataModule):
 
         # sample["image"] = torch.from_numpy(sample["image"])
         # sample["mask"] = torch.from_numpy(sample["mask"])
+        # sample["mask"] = sample["mask"].astype("int32")
 
         return sample
 
