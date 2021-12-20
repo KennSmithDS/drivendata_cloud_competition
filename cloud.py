@@ -106,7 +106,7 @@ class Sentinel2CloudCover(VisionDataset):
         try:
             
             chip = self.chip_ids[index]
-            print(f"Loading chip id: {chip}\n")
+            # print(f"Loading chip id: {chip}\n")
 
             sample = {
                 "image": self._load_feature(chip),
@@ -200,6 +200,9 @@ class Sentinel2CloudCoverDataModule(pl.LightningDataModule):
         # sample["mask"] = torch.from_numpy(sample["mask"])
         # sample["mask"] = sample["mask"].astype("int32")
 
+        sample["image"] = sample["image"].float()
+        sample["mask"] = sample["mask"].long()
+
         return sample
 
     def prepare_data(self) -> None:
@@ -262,8 +265,8 @@ class Sentinel2CloudCoverDataModule(pl.LightningDataModule):
         #     self.all_test_dataset, range(len(self.all_test_dataset))
         # )
 
-    def teardown(self) -> None:
-        pass
+    # def teardown(self, stage: Optional[str] = None):
+    #     pass
 
     def train_dataloader(self) -> DataLoader[Any]:
         """Return a DataLoader for training.
